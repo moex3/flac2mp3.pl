@@ -105,6 +105,7 @@ sub iterFlac {
 
     my @required_tags = ("artist", "title", "album", "tracknumber");
     my $flac = $_;
+    shellsan(\$flac);
     my $dest = "$ODIR/" . basename($flac);
     $dest =~ s/\.flac$/\.mp3/;
     my $tags = getFlacTags($flac);
@@ -124,8 +125,7 @@ sub iterFlac {
     argsToTags($tags);
     my $tagopts = tagsToOpts($tags);
 
-    $flac =~ s!'!'\\''!g;
-    qx(flac -cd '$flac' | lame -V0 -S --vbr-new --add-id3v2 @$tagopts - "$dest");
+    qx(flac -cd -- '$flac' | lame -V0 -S --vbr-new --add-id3v2 @$tagopts - '$dest');
 }
 
 sub argsToTags {
@@ -148,15 +148,17 @@ sub tagsToOpts {
         my $tagName = $idLookup{$currKey};
         my $type = ref($tagName);
         if ($type eq "" && defined($tagName)) {
-            push(@tagopts, qq(--tv '$tagName=$tags->{$currKey}'));
+            my $tagCont = $tags->{$currKey};
+            shellsan(\$tagCont);
+            push(@tagopts, qq(--tv '$tagName=$tagCont'));
         } elsif ($type eq "ARRAY") {
             my $tagCont = $tagName->[1]->($tags);
+            shellsan(\$tagCont);
             push(@tagopts, qq(--tv '$tagName->[0]=$tagCont'));
         }
 
     }
 
-    #print(Dumper(\@tagopts));
     return \@tagopts;
 }
 
@@ -164,13 +166,17 @@ sub getFlacTags {
     my $flac = shift;
 
     my %tags;
-    my @tagtxt = qx(metaflac --list --block-type=VORBIS_COMMENT -- "$flac");
+    my @tagtxt = qx(metaflac --list --block-type=VORBIS_COMMENT -- '$flac');
     foreach my $tagline (@tagtxt) {
         if ($tagline =~ /comment\[\d+\]:\s(.*?)=(.*)/) {
             $tags{lc($1)} = $2;
         }
     }
     return \%tags;
+}
+
+sub shellsan {
+    ${$_[0]} =~ s/'/'\\''/g;
 }
 
 sub usage {
