@@ -93,6 +93,10 @@ if (scalar(@ARGV) != 2) {
 
 my ($IDIR, $ODIR) = @ARGV;
 
+if (!-e $ODIR) {
+    mkdir $ODIR;
+}
+
 find({ wanted => \&iterFlac, no_chdir => 1 }, $IDIR);
 
 sub iterFlac {
@@ -120,7 +124,8 @@ sub iterFlac {
     argsToTags($tags);
     my $tagopts = tagsToOpts($tags);
 
-    qx(flac -cd "$flac" | lame -V0 -S --vbr-new --add-id3v2 @$tagopts - "$dest");
+    $flac =~ s!'!'\\''!g;
+    qx(flac -cd '$flac' | lame -V0 -S --vbr-new --add-id3v2 @$tagopts - "$dest");
 }
 
 sub argsToTags {
