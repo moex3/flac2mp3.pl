@@ -6,9 +6,20 @@ use File::Find;
 use Data::Dumper;
 use File::Basename;
 
+my $opt_no_genre;
+my $opt_comment;
+my $opt_catid;
+
+# TODO fill this out
+my %genreMap = (
+    edm => 52,
+    soundtrack => 24,
+);
+
 # this is a godsent page
 # https://wiki.hydrogenaud.io/index.php?title=Tag_Mapping
 # a lot of this may not work
+# TODO escape potential 's
 my %idLookup = (
     album => 'TALB',
     albumsort => 'TSOA',
@@ -36,23 +47,28 @@ my %idLookup = (
     remixer => 'TPE4',
     discnumber => ['TPOS', sub {
         my $t = shift;
-        return "$t->{discnumber}" if !exists($t->{disctotal});
-        return "$t->{discnumber}/$t->{disctotal}";
+        my $totalkey = exists($t->{disctotal}) ? 'disctotal' : 'totaldiscs';
+        return "$t->{discnumber}" if !exists($t->{$totalkey});
+        return "$t->{discnumber}/$t->{$totalkey}";
     }],
+    totaldiscs => undef,
     disctotal => undef,
     tracknumber => ['TRCK', sub {
         my $t = shift;
-        return "$t->{tracknumber}" if !exists($t->{tracktotal});
-        return "$t->{tracknumber}/$t->{tracktotal}";
+        my $totalkey = exists($t->{tracktotal}) ? 'tracktotal' : 'totaltracks';
+        return "$t->{tracknumber}" if !exists($t->{$totalkey});
+        return "$t->{tracknumber}/$t->{$totalkey}";
     }],
+    totaltracks => undef,
     tracktotal => undef,
-    date => 'TDRC', # This is for id3v2.4
+    #date => 'TDRC', # This is for id3v2.4
+    date => 'TYER',
     originaldate => 'TDOR', # Also for 2.4 only
     isrc => 'TSRC',
     barcode => 'TXXX=BARCODE',
-    catalognumber => 'TXXX=CATALOGNUMBER',
-    catalog => 'TXXX=CATALOGNUMBER',
-    catalogid => 'TXXX=CATALOGNUMBER',
+    catalog => ['TXXX=CATALOGNUMBER', sub { return tagmap_catalogid(shift, 'catalog'); } ],
+    catalognumber => ['TXXX=CATALOGNUMBER', sub { return tagmap_catalogid(shift, 'catalognumber'); } ],
+    catalogid => ['TXXX=CATALOGNUMBER', sub { return tagmap_catalogid(shift, 'catalogid'); } ],
     'encoded-by' => 'TENC',
     encoder => 'TSSE',
     encoding => 'TSSE',
@@ -63,23 +79,43 @@ my %idLookup = (
     replaygain_track_gain => 'TXXX=REPLAYGAIN_TRACK_GAIN',
     replaygain_track_peak => 'TXXX=REPLAYGAIN_TRACK_PEAK',
     genre => ['TCON', sub {
-        return 24;
+        return undef if ($opt_no_genre);
+
+        my $genreName = shift->{genre};
+        if (!exists($genreMap{lc($genreName)})) {
+            # If no genre number exists, use the name
+            return $genreName;
+        }
+        return $genreMap{$genreName};
     }],
     #mood => ['TMOO', sub {
     #}],
     bpm => 'TBPM',
-    comment => 'COMM',
+    comment => ['COMM=Comment', sub {
+        return undef if (defined($opt_comment) && $opt_comment eq "");
+        return shift->{comment};
+    }],
     copyright => 'TCOP',
     language => 'TLAN',
     script => 'TXXX=SCRIPT',
     lyrics => 'USLT',
+    circle => 'TXXX=CIRCLE',
 );
+sub tagmap_catalogid {
+        my $t = shift;
+        my $own_tag_name = shift;
+        return undef if (defined($opt_catid) && $opt_catid eq "");
+        return $t->{$own_tag_name};
+}
 
 my $opt_genre;
 my $opt_help;
 GetOptions(
-    "genre=s" => \$opt_genre,
-    "help" => \$opt_help
+    "genre|g=s" => \$opt_genre,
+    "no-genre|G" => \$opt_no_genre,
+    "help|h" => \$opt_help,
+    "catid=s" => \$opt_catid,
+    "comment=s" => \$opt_comment,
 ) or die("Error in command line option");
 
 if ($opt_help) {
@@ -132,6 +168,10 @@ sub argsToTags {
     my $argTags = shift;
     if (defined($opt_genre)) {
         $argTags->{genre} = $opt_genre;
+    } elsif (defined($opt_comment) && $opt_comment ne "") {
+        $argTags->{comment} = $opt_comment;
+    } elsif (defined($opt_catid) && $opt_catid ne "") {
+        $argTags->{catalognumber} = $opt_catid;
     }
 }
 
@@ -153,8 +193,10 @@ sub tagsToOpts {
             push(@tagopts, qq(--tv '$tagName=$tagCont'));
         } elsif ($type eq "ARRAY") {
             my $tagCont = $tagName->[1]->($tags);
-            shellsan(\$tagCont);
-            push(@tagopts, qq(--tv '$tagName->[0]=$tagCont'));
+            if (defined($tagCont)) {
+                shellsan(\$tagCont);
+                push(@tagopts, qq(--tv '$tagName->[0]=$tagCont'));
+            }
         }
 
     }
@@ -191,6 +233,9 @@ Usage:
 
     -h, --help          print this help text
     -g, --genre  NUM    force this genre as a tag (lame --genre-list)
+    -G, --no-genre      ignore genre in flac file
+    --catid     STRING  the catalog id to set (or "")
+    --comment   STRING  the comment to set (or "")
 EOF
     print($h);
     exit 0;

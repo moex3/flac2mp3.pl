@@ -8,8 +8,8 @@ Dependencies: `flac` `metaflac` `lame`
 flac2mp3.pl ~/flacs ~/mp3
 ```
 
-Tags can be overridden with options. Only the genre tag is supported rith now.
+Some tags can be overridden with options.
 ```bash
-flac2mp3.pl --genre 145 ~/flacs ~/mp3
+flac2mp3.pl --genre 145 --comment "yes" ~/flacs ~/mp3
 ```
 This would add the genre as 'Anime'. Run `lame --genre-list` for the whole list. Can be specified multiple ones, with comma separation (i think).
