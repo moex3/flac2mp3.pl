@@ -142,6 +142,7 @@ sub tagmap_catalogid {
 my $opt_genre;
 my $opt_help;
 my @opt_tagreplace;
+my $opt_cbr = 0;
 GetOptions(
     "genre|g=s" => \$opt_genre,
     "no-genre|G" => \$opt_no_genre,
@@ -150,6 +151,7 @@ GetOptions(
     "catid=s" => \$opt_catid,
     "comment=s" => \$opt_comment,
     "tagreplace|t=s" => \@opt_tagreplace,
+    "320|3" => \$opt_cbr,
 ) or die("Error in command line option");
 
 if ($opt_help) {
@@ -201,7 +203,12 @@ sub iterFlac {
 
     #print("Debug: @$tagopts\n");
     shellsan(\$dest);
-    my $cmd = "flac -cd -- '$flac' | lame -V0 -S --vbr-new -q 0 --add-id3v2 @$tagopts - '$dest'";
+    my $cmd;
+    if ($opt_cbr) {
+        $cmd = "flac -cd -- '$flac' | lame -S -b 320 -q 0 --add-id3v2 @$tagopts - '$dest'";
+    } else {
+        $cmd = "flac -cd -- '$flac' | lame -S -V0 --vbr-new -q 0 --add-id3v2 @$tagopts - '$dest'";
+    }
     #print("Debug - CMD: [$cmd]\n");
     qx($cmd);
     if ($? != 0) {
@@ -311,7 +318,7 @@ sub shellsan {
 }
 
 sub usage {
-    print("Usage: flac2mp3.pl [-h | --help] [-r] [-g | --genre NUM] <input_dir> <output_dir>\n");
+    print("Usage: flac2mp3.pl [-h | --help] [-r] [-3] [-g | --genre NUM] <input_dir> <output_dir>\n");
     exit 1;
 }
 
@@ -328,6 +335,7 @@ Usage:
     --comment   STRING  the comment to set (or "")
     -t --tagreplace STR Replace flac tags for a specific file only
                         Like -t '02*flac/TITLE=Some other title'
+    -3, --320           Convert into CBR 320 instead into the default V0
 EOF
     print($h);
     exit 0;
