@@ -23,6 +23,16 @@ my %genreMap = (
 # https://picard-docs.musicbrainz.org/en/appendices/tag_mapping.html
 # a lot of this may not work
 # TODO escape potential 's
+#
+# Format is:
+#  Vorbis tag string => Mp3 tag value
+#  where mp3 tag value may be:
+#   undef -> Skip this tag
+#   A string -> Use this as the mp3 tag, and use the vorbis tag value as value
+#   code -> Execute this function. This should return an array, where [0] is the tag, [1] is the value.
+#   An array (str, str) -> [0] is the mp3 tag to use, [1] is the value prefix
+#   An array (str, code) -> [0] is the mp3 tag to use, [1] is a function that is executed, and the result is the tag value
+#  The code-s here will be called with the flac tags hashmap
 my %idLookup = (
     album => 'TALB',
     albumsort => 'TSOA',
@@ -36,15 +46,15 @@ my %idLookup = (
     albumartistsort => 'TSO2', # Maybe?
     artist => 'TPE1',
     artistsort => 'TSOP',
-    arranger => 'TIPL=arranger',
+    arranger => ['TIPL', 'arranger:'],
     author => 'TEXT',
     composer => 'TCOM',
     conductor => 'TPE3',
-    engineer => 'TIPL=engineer',
-    djmixer => 'TIPL=DJ-mix',
-    mixer => 'TIPL=mix',
+    engineer => ['TIPL', 'engineer:'],
+    djmixer => ['TIPL', 'DJ-mix:'],
+    mixer => ['TIPL', 'mix:'],
     #performer => 'TMCL', # This produces some really weird tags
-    producer => 'TIPL=producer',
+    producer => ['TIPL', 'producer:'],
     publisher => 'TPUB',
     organization => 'TPUB',
     label => 'TPUB',
@@ -52,42 +62,42 @@ my %idLookup = (
     discnumber => ['TPOS', sub {
         my $t = shift;
         my $totalkey = exists($t->{disctotal}) ? 'disctotal' : 'totaldiscs';
-        return "$t->{discnumber}" if !exists($t->{$totalkey});
-        return "$t->{discnumber}/$t->{$totalkey}";
+        return "$t->{discnumber}[0]" if !exists($t->{$totalkey});
+        return "$t->{discnumber}[0]/$t->{$totalkey}[0]";
     }],
     totaldiscs => undef,
     disctotal => undef,
     tracknumber => ['TRCK', sub {
         my $t = shift;
         my $totalkey = exists($t->{tracktotal}) ? 'tracktotal' : 'totaltracks';
-        return "$t->{tracknumber}" if !exists($t->{$totalkey});
-        return "$t->{tracknumber}/$t->{$totalkey}";
+        return "$t->{tracknumber}[0]" if !exists($t->{$totalkey});
+        return "$t->{tracknumber}[0]/$t->{$totalkey}[0]";
     }],
     totaltracks => undef,
     tracktotal => undef,
     #date => 'TDRC', # This is for id3v2.4
     #date => 'TYER',
-    date => [undef, sub {
+    date => sub {
         my $t = shift;
-        my $date = $t->{date};
+        my $date = $t->{date}[0];
         if (length($date) == 4) { # Only year
-            return "TYER=$date";
+            return ["TYER", "$date"];
         }
         if (!($date =~ m/^\d{4}\.\d{2}\.\d{2}$/)) {
             print("Date format unknown: $date\n");
             exit 1;
         }
         $date =~ s/\./-/g;
-        return "TDRL=$date"; # Release date
-    }],
+        return ["TDRL", "$date"]; # Release date
+    },
     originaldate => 'TDOR', # Also for 2.4 only
     'release date' => 'TDOR', # Also for 2.4 only
     isrc => 'TSRC',
-    barcode => 'TXXX=BARCODE',
-    catalog => ['TXXX=CATALOGNUMBER', sub { return tagmap_catalogid(shift, 'catalog'); } ],
-    catalognumber => ['TXXX=CATALOGNUMBER', sub { return tagmap_catalogid(shift, 'catalognumber'); } ],
-    catalogid => ['TXXX=CATALOGNUMBER', sub { return tagmap_catalogid(shift, 'catalogid'); } ],
-    labelno => ['TXXX=CATALOGNUMBER', sub { return tagmap_catalogid(shift, 'labelno'); } ],
+    barcode => ['TXXX', 'BARCODE:'],
+    catalog => ['TXXX', sub { return "CATALOGNUMBER:" . tagmap_catalogid(shift, 'catalog'); } ],
+    catalognumber => ['TXXX', sub { return "CATALOGNUMBER:" . tagmap_catalogid(shift, 'catalognumber'); } ],
+    catalogid => ['TXXX', sub { return "CATALOGNUMBER:" . tagmap_catalogid(shift, 'catalogid'); } ],
+    labelno => ['TXXX', sub { return "CATALOGNUMBER:" . tagmap_catalogid(shift, 'labelno'); } ],
     'encoded-by' => 'TENC',
     encoder => 'TSSE',
     encoding => 'TSSE',
@@ -96,7 +106,7 @@ my %idLookup = (
     genre => ['TCON', sub {
         return undef if ($opt_no_genre);
 
-        my $genreName = shift->{genre};
+        my $genreName = shift->{genre}[0];
         if (!exists($genreMap{lc($genreName)})) {
             # If no genre number exists, use the name
             return $genreName;
@@ -106,38 +116,41 @@ my %idLookup = (
     #mood => ['TMOO', sub {
     #}],
     bpm => 'TBPM',
-    comment => ['COMM=Comment', sub {
+    comment => ['COMM', sub {
         return undef if (defined($opt_comment) && $opt_comment eq "");
-        return shift->{comment};
+        return "Comment:" . shift->{comment}[0];
     }],
     copyright => 'TCOP',
     language => 'TLAN',
     #replaygain_album_peak => 'TXXX=REPLAYGAIN_ALBUM_PEAK',
     #replaygain_album_gain => 'TXXX=REPLAYGAIN_ALBUM_GAIN',
     replaygain_track_gain => sub {
+        print("EEEEEEERRRRRRRRROOOOOOOOOORRRRRRRRRRRE FIXXXXXXXXXXXX THIIIIIIIIISSSSSSSS\n");
+        exit(1);
         return undef if (!$opt_rg);
-        shift->{replaygain_track_gain} =~ /^(-?\d+\.\d+) dB$/;
+        shift->{replaygain_track_gain}[0] =~ /^(-?\d+\.\d+) dB$/;
         my $gain_db = $1;
         exit(1) if ($gain_db eq "");
         return "--replaygain-accurate --gain $gain_db";
+        # TODO this lulw
     },
 
     #replaygain_album_gain => 'TXXX=REPLAYGAIN_ALBUM_GAIN',
     #replaygain_album_peak => 'TXXX=REPLAYGAIN_ALBUM_PEAK',
     #replaygain_track_gain => 'TXXX=REPLAYGAIN_TRACK_GAIN',
     #replaygain_track_peak => 'TXXX=REPLAYGAIN_TRACK_PEAK',
-    script => 'TXXX=SCRIPT',
+    script => ['TXXX', 'SCRIPT:'],
     lyrics => 'USLT',
-    circle => 'TXXX=CIRCLE',
-    event => 'TXXX=EVENT',
-    discid => 'TXXX=DISCID',
-    originaltitle => 'TXXX=ORIGINALTITLE',
+    circle => ['TXXX', 'CIRCLE:'],
+    event => ['TXXX', 'EVENT:'],
+    discid => ['TXXX', 'DISCID:'],
+    originaltitle => ['TXXX', 'ORIGINALTITLE:'],
 );
 sub tagmap_catalogid {
         my $t = shift;
         my $own_tag_name = shift;
         return undef if (defined($opt_catid) && $opt_catid eq "");
-        return $t->{$own_tag_name};
+        return $t->{$own_tag_name}[0];
 }
 
 my $opt_genre;
@@ -206,13 +219,29 @@ sub iterFlac {
     shellsan(\$dest);
     my $cmd;
     if ($opt_cbr) {
-        $cmd = "flac -cd -- '$flac' | lame -S -b 320 -q 0 --add-id3v2 @$tagopts - '$dest'";
+        $cmd = "flac -cd -- '$flac' | lame -S -b 320 -q 0 --add-id3v2 - '$dest'";
     } else {
-        $cmd = "flac -cd -- '$flac' | lame -S -V0 --vbr-new -q 0 --add-id3v2 @$tagopts - '$dest'";
+        $cmd = "flac -cd -- '$flac' | lame -S -V0 --vbr-new -q 0 --add-id3v2 - '$dest'";
     }
     #print("Debug - CMD: [$cmd]\n");
     qx($cmd);
     if ($? != 0) {
+        exit(1);
+    }
+
+    my $mid3v2TagLine = "";
+    #print(Dumper(\@$tagopts));
+    # Add tags with mid3v2 instead of lame to better support multiple tag values
+    foreach my $tagItem (@$tagopts) {
+        $mid3v2TagLine = $mid3v2TagLine . $tagItem . " ";
+    }
+    #print(Dumper(\$mid3v2TagLine));
+
+    my $mid3v2TagCmd = "mid3v2 $mid3v2TagLine -- '$dest'";
+    #print("Mid3V2 Debug - CMD: [$mid3v2TagCmd]\n");
+    qx($mid3v2TagCmd);
+    if ($? != 0) {
+        print("ERROR: At mid3v2 tag set\n");
         exit(1);
     }
 
@@ -270,52 +299,55 @@ sub tagsToOpts {
     my $tags = shift;
     my @tagopts;
     
-    # TODO escape ' and =?
+    # TODO escape stuff?
     foreach my $currKey (keys (%$tags)) {
         if (!exists($idLookup{$currKey})) {
             print("Tag: '$currKey' doesn't have a mapping, skipping\n");
             next;
         }
-        my $tagName = $idLookup{$currKey};
-        my $type = ref($tagName);
-        if ($type eq "" && defined($tagName)) {
-            # If tag name is defined and tag contents exists
-            my $tagCont = $tags->{$currKey};
-            shellsan(\$tagCont);
-            push(@tagopts, qq(--tv '$tagName=$tagCont'));
+        my $tagMapping = $idLookup{$currKey};
+        my $type = ref($tagMapping);
+        if ($type eq "" && defined($tagMapping)) {
+            # If tag name is defined and tag contents exists (aka not silenced)
+            foreach my $tagCont (@{$tags->{$currKey}}) {
+                shellsan(\$tagCont);
+                push(@tagopts, qq('--$tagMapping' '$tagCont'));
+            }
         } elsif ($type eq "ARRAY") {
-            my $tagCont = $tagName->[1]->($tags);
-            my $tagKey = $tagName->[0];
-            if (defined($tagCont)) {
-                if (defined($tagKey)) {
-                    shellsan(\$tagCont);
-                    push(@tagopts, qq(--tv '$tagName->[0]=$tagCont'));
-                } else {
-                    if (ref($tagCont) eq 'ARRAY') {
-                        # If we have an array of tags
-                        foreach my $tC (@$tagCont) {
-                            shellsan(\$tC);
-                            push(@tagopts, qq(--tv '$tC'));
-                        }
-                    } else {
-                        # If we have only one 
-                        shellsan(\$tagCont);
-                        push(@tagopts, qq(--tv '$tagCont'));
-                    }
+            my $mapKey = $tagMapping->[0];
+            my $mapCont = $tagMapping->[1];
+            my $mapContType = ref($mapCont);
+            if (not defined($mapCont)) {
+                print("WHUT???\n");
+                exit(1);
+            }
+
+            if ($mapContType eq "") {
+                foreach my $tagValue (@{$tags->{$currKey}}) {
+                    shellsan(\$tagValue);
+                    push(@tagopts, qq('--$mapKey' '$mapCont$tagValue'));
                 }
+            } elsif ($mapContType eq "CODE") {
+                my $tagValue = $mapCont->($tags);
+                shellsan(\$tagValue);
+                push(@tagopts, qq('--$mapKey' '$tagValue'));
             }
         } elsif ($type eq 'CODE') {
             # If we have just a code reference
             # do not assume, that this is a tag, rather a general cmd opt
-            my $opt = $tagName->($tags);
-            if (defined($opt)) {
-                shellsan(\$opt);
-                push(@tagopts, qq($opt));
-            }
+            #my $opt = $tagName->($tags);
+            #if (defined($opt)) {
+            #shellsan(\$opt);
+            #push(@tagopts, qq($opt));
+            #}
+
+            my $codeRet = $tagMapping->($tags);
+            my $mapKey = $codeRet->[0];
+            my $mapCont = $codeRet->[1];
+            shellsan(\$mapCont);
+            push(@tagopts, qq('--$mapKey' '$mapCont'));
         }
-
     }
-
     return \@tagopts;
 }
 
@@ -333,7 +365,11 @@ sub getFlacTags {
                 print("Empty tag: $1\n");
                 next;
             }
-            $tags{lc($1)} = $2;
+            if (not exists($tags{lc($1)})) {
+                @{$tags{lc($1)}} = ($2);
+            } else {
+                push(@{$tags{lc($1)}}, $2);
+            }
         }
     }
     return \%tags;
