@@ -98,10 +98,10 @@ my %idLookup = (
     catalognumber => ['TXXX', sub { return "CATALOGNUMBER:" . tagmap_catalogid(shift, 'catalognumber'); } ],
     catalogid => ['TXXX', sub { return "CATALOGNUMBER:" . tagmap_catalogid(shift, 'catalogid'); } ],
     labelno => ['TXXX', sub { return "CATALOGNUMBER:" . tagmap_catalogid(shift, 'labelno'); } ],
-    'encoded-by' => 'TENC',
-    encoder => 'TSSE',
-    encoding => 'TSSE',
-    'encoder settings' => 'TSSE',
+    #'encoded-by' => 'TENC',
+    #encoder => 'TSSE',
+    #encoding => 'TSSE',
+    #'encoder settings' => 'TSSE',
     media => 'TMED',
     genre => ['TCON', sub {
         return undef if ($opt_no_genre);
