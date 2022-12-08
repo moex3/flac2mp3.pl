@@ -5,6 +5,7 @@ use Getopt::Long;
 use File::Find;
 use Data::Dumper;
 use File::Basename;
+use File::Temp qw/ tempfile /;
 
 my $opt_no_genre;
 my $opt_comment;
@@ -214,6 +215,31 @@ sub iterFlac {
     if ($? != 0) {
         exit(1);
     }
+
+    embedImageFromFlac($flac, $dest);
+}
+
+sub embedImageFromFlac {
+    my $flac = shift;
+    my $mp3 = shift;
+
+    # I can't get the automatic deletion working :c
+    my (undef, $fname) = tempfile();
+    # Export image from flac
+    qx(metaflac --export-picture-to='$fname' -- '$flac');
+    if ($? != 0) {
+        # Probably no image
+        unlink($fname);
+        return;
+    }
+    # Extract mime type too
+    my $pinfo = qx(metaflac --list --block-type=PICTURE -- '$flac');
+    $pinfo =~ m/MIME type: (.*)/;
+    my $mimeType = $1;
+
+    # Add image to mp3
+    qx(mid3v2 -p '${fname}:cover:3:$mimeType' -- '$mp3');
+    unlink($fname);
 }
 
 sub argsToTags {
