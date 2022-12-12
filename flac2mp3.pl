@@ -83,11 +83,11 @@ my %idLookup = (
         if (length($date) == 4) { # Only year
             return ["TYER", "$date"];
         }
-        if (!($date =~ m/^\d{4}\.\d{2}\.\d{2}$/)) {
+        if (!($date =~ m/^\d{4}[\.-]\d{2}[\.-]\d{2}$/)) {
             print("Date format unknown: $date\n");
             exit 1;
         }
-        $date =~ s/\./-/g;
+        $date =~ s/[\.-]/-/g;
         return ["TDRL", "$date"]; # Release date
     },
     originaldate => 'TDOR', # Also for 2.4 only
@@ -276,20 +276,20 @@ sub argsToTags {
     my $fname = shift;
     $fname =~ s!^.*/!!;
     if (defined($opt_genre)) {
-        $argTags->{genre} = $opt_genre;
+        $argTags->{genre} = [$opt_genre];
     }
     if (defined($opt_comment) && $opt_comment ne "") {
-        $argTags->{comment} = $opt_comment;
+        $argTags->{comment} = [$opt_comment];
     }
     if (defined($opt_catid) && $opt_catid ne "") {
-        $argTags->{catalognumber} = $opt_catid;
+        $argTags->{catalognumber} = [$opt_catid];
     }
     if (scalar @opt_tagreplace > 0) {
         foreach my $trepl (@opt_tagreplace) {
             $trepl =~ m!(.*?)/(.*?)=(.*)!;
             my ($freg, $tag, $tagval) = ($1, $2, $3);
             if ($fname =~ m!$freg!) {
-                $argTags->{lc($tag)} = $tagval;
+                $argTags->{lc($tag)} = ($tagval);
             }
         }
     }
