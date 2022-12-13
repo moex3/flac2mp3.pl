@@ -270,8 +270,8 @@ sub embedImageFromFlac {
     my $flac = shift;
     my $mp3 = shift;
 
-    return if ($opt_embedcover eq "");
-    if ($opt_embedcover ne "") {
+    if (defined($opt_embedcover)) {
+        return if ($opt_embedcover eq "");
         my $cmime = getMimeType($opt_embedcover);
         qx(mid3v2 -p '${opt_embedcover}:cover:3:$cmime' -- '$mp3');
         return;
