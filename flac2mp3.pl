@@ -11,6 +11,7 @@ my $opt_no_genre;
 my $opt_comment;
 my $opt_catid;
 my $opt_rg;
+my $opt_embedcover;
 
 # TODO fill this out
 my %genreMap = (
@@ -46,14 +47,16 @@ my %idLookup = (
     albumartistsort => 'TSO2', # Maybe?
     artist => 'TPE1',
     artistsort => 'TSOP',
-    arranger => ['TIPL', 'arranger:'],
+    # arranger => ['TIPL', 'arranger:'],
+    arranger => ['TXXX', 'ARRANGER:'],
     author => 'TEXT',
     composer => 'TCOM',
     conductor => 'TPE3',
     engineer => ['TIPL', 'engineer:'],
     djmixer => ['TIPL', 'DJ-mix:'],
     mixer => ['TIPL', 'mix:'],
-    #performer => 'TMCL', # This produces some really weird tags
+    # performer => ['TMCL', "instrument:"], # Should be like this, but mid3v2 says it doesn't have this tag.
+    performer => ['TXXX', "PERFORMER:"],
     producer => ['TIPL', 'producer:'],
     publisher => 'TPUB',
     organization => 'TPUB',
@@ -141,10 +144,13 @@ my %idLookup = (
     #replaygain_track_peak => 'TXXX=REPLAYGAIN_TRACK_PEAK',
     script => ['TXXX', 'SCRIPT:'],
     lyrics => 'USLT',
+    lyricist => 'TEXT',
     circle => ['TXXX', 'CIRCLE:'],
     event => ['TXXX', 'EVENT:'],
     discid => ['TXXX', 'DISCID:'],
     originaltitle => ['TXXX', 'ORIGINALTITLE:'],
+    origin => ['TXXX', 'ORIGIN:'],
+    origintype => ['TXXX', 'ORIGINTYPE:'],
 );
 sub tagmap_catalogid {
         my $t = shift;
@@ -164,6 +170,7 @@ GetOptions(
     "help|h" => \$opt_help,
     "catid=s" => \$opt_catid,
     "comment=s" => \$opt_comment,
+    "cover=s" => \$opt_embedcover,
     "tagreplace|t=s" => \@opt_tagreplace,
     "320|3" => \$opt_cbr,
 ) or die("Error in command line option");
@@ -213,6 +220,9 @@ sub iterFlac {
     }
     
     argsToTags($tags, $flac_o);
+    #foreach (%$tags) {
+    #print("Copying tag '$_->[0]=$_->[1]'\n");
+    #}
     my $tagopts = tagsToOpts($tags);
 
     #print("Debug: @$tagopts\n");
@@ -248,9 +258,24 @@ sub iterFlac {
     embedImageFromFlac($flac, $dest);
 }
 
+sub getMimeType {
+    my $file = shift;
+    shellsan(\$file);
+    my $mime = qx(file -b --mime-type '$file');
+    chomp($mime);
+    return $mime;
+}
+
 sub embedImageFromFlac {
     my $flac = shift;
     my $mp3 = shift;
+
+    return if ($opt_embedcover eq "");
+    if ($opt_embedcover ne "") {
+        my $cmime = getMimeType($opt_embedcover);
+        qx(mid3v2 -p '${opt_embedcover}:cover:3:$cmime' -- '$mp3');
+        return;
+    }
 
     # I can't get the automatic deletion working :c
     my (undef, $fname) = tempfile();
@@ -278,8 +303,12 @@ sub argsToTags {
     if (defined($opt_genre)) {
         $argTags->{genre} = [$opt_genre];
     }
-    if (defined($opt_comment) && $opt_comment ne "") {
-        $argTags->{comment} = [$opt_comment];
+    if (defined($opt_comment)) {
+        if ($opt_comment eq "") {
+            delete($argTags->{comment});
+        } else {
+            $argTags->{comment} = [$opt_comment];
+        }
     }
     if (defined($opt_catid) && $opt_catid ne "") {
         $argTags->{catalognumber} = [$opt_catid];
@@ -295,10 +324,40 @@ sub argsToTags {
     }
 }
 
+sub mergeDupeTxxx {
+    # Merge tags together, that we can't have multiples of
+    # Like TXXX with same key
+
+    my $tagsArr = shift;
+
+    for (my $i = 0; $i < scalar @$tagsArr; $i++) {
+        if (lc($tagsArr->[$i]->[0]) ne "txxx") {
+            next;
+        }
+
+        $tagsArr->[$i]->[1] =~ m/^(.*?):(.*)$/;
+        my $txkeyFirst = $1;
+        my $txvalFirst = $2;
+
+        for (my $j = $i + 1; $j < scalar @$tagsArr; $j++) {
+            next if (lc($tagsArr->[$j]->[0]) ne "txxx");
+            $tagsArr->[$j]->[1] =~ m/^(.*?):(.*)$/;
+            my $txkeySecond = $1;
+            my $txvalSecond = $2;
+
+            next if ($txkeyFirst ne $txkeySecond);
+            # TXXX keys are equal, append the second to the first, and delete this entry
+            $tagsArr->[$i]->[1] .= ';' . $txvalSecond;
+            #print("DDDDDDDDDDDDD: Deleted $j index $txkeySecond:$txvalSecond\n");
+            splice(@$tagsArr, $j, 1);
+        }
+    }
+}
+
 sub tagsToOpts {
     my $tags = shift;
     my @tagopts;
-    
+
     # TODO escape stuff?
     foreach my $currKey (keys (%$tags)) {
         if (!exists($idLookup{$currKey})) {
@@ -311,7 +370,7 @@ sub tagsToOpts {
             # If tag name is defined and tag contents exists (aka not silenced)
             foreach my $tagCont (@{$tags->{$currKey}}) {
                 shellsan(\$tagCont);
-                push(@tagopts, qq('--$tagMapping' '$tagCont'));
+                push(@tagopts, ["$tagMapping", "$tagCont"]);
             }
         } elsif ($type eq "ARRAY") {
             my $mapKey = $tagMapping->[0];
@@ -325,12 +384,12 @@ sub tagsToOpts {
             if ($mapContType eq "") {
                 foreach my $tagValue (@{$tags->{$currKey}}) {
                     shellsan(\$tagValue);
-                    push(@tagopts, qq('--$mapKey' '$mapCont$tagValue'));
+                    push(@tagopts, ["$mapKey", "$mapCont$tagValue"]);
                 }
             } elsif ($mapContType eq "CODE") {
                 my $tagValue = $mapCont->($tags);
                 shellsan(\$tagValue);
-                push(@tagopts, qq('--$mapKey' '$tagValue'));
+                push(@tagopts, ["$mapKey", "$tagValue"]);
             }
         } elsif ($type eq 'CODE') {
             # If we have just a code reference
@@ -345,10 +404,20 @@ sub tagsToOpts {
             my $mapKey = $codeRet->[0];
             my $mapCont = $codeRet->[1];
             shellsan(\$mapCont);
-            push(@tagopts, qq('--$mapKey' '$mapCont'));
+            push(@tagopts, ["$mapKey", "$mapCont"]);
         }
     }
-    return \@tagopts;
+
+    mergeDupeTxxx(\@tagopts);
+
+    # Convert the tag array into an array of string to use with mid3v2
+    my @tagoptsStr;
+
+    foreach (@tagopts) {
+        push(@tagoptsStr, qq('--$_->[0]' '$_->[1]'));
+    }
+
+    return \@tagoptsStr;
 }
 
 sub getFlacTags {
@@ -395,6 +464,7 @@ Usage:
     -r, --replay-gain   use replay gain values
     --catid     STRING  the catalog id to set (or "")
     --comment   STRING  the comment to set (or "")
+    --cover     STRING  Use this image as cover (or "" to not copy from flac)
     -t --tagreplace STR Replace flac tags for a specific file only
                         Like -t '02*flac/TITLE=Some other title'
     -3, --320           Convert into CBR 320 instead into the default V0
