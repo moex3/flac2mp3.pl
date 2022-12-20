@@ -29,10 +29,10 @@ my %genreMap = (
 #  Vorbis tag string => Mp3 tag value
 #  where mp3 tag value may be:
 #   undef -> Skip this tag
-#   A string -> Use this as the mp3 tag, and use the vorbis tag value as value
-#   code -> Execute this function. This should return an array, where [0] is the tag, [1] is the value.
-#   An array (str, str) -> [0] is the mp3 tag to use, [1] is the value prefix
-#   An array (str, code) -> [0] is the mp3 tag to use, [1] is a function that is executed, and the result is the tag value
+#   A string -> Use this as the mp3 tag, and use the vorbis tag value as value (tags are escaped)
+#   code -> Execute this function. This should return an array, where [0] is the tag, [1] is the value. (tags are not escaped)
+#   An array (str, str) -> [0] is the mp3 tag to use, [1] is the value prefix (tags are escaped)
+#   An array (str, code) -> [0] is the mp3 tag to use, [1] is a function that is executed, and the result is the tag value (tags are not escaped)
 #  The code-s here will be called with the flac tags hashmap
 my %idLookup = (
     album => 'TALB',
@@ -83,7 +83,7 @@ my %idLookup = (
     date => sub {
         my $t = shift;
         my $date = $t->{date}[0];
-        if (length($date) == 4) { # Only year
+        if (length($date) == 4 && $date =~ m/\d{4}/) { # Only year
             return ["TYER", "$date"];
         }
         if (!($date =~ m/^\d{4}[\.-]\d{2}[\.-]\d{2}$/)) {
@@ -97,10 +97,10 @@ my %idLookup = (
     'release date' => 'TDOR', # Also for 2.4 only
     isrc => 'TSRC',
     barcode => ['TXXX', 'BARCODE:'],
-    catalog => ['TXXX', sub { return "CATALOGNUMBER:" . tagmap_catalogid(shift, 'catalog'); } ],
-    catalognumber => ['TXXX', sub { return "CATALOGNUMBER:" . tagmap_catalogid(shift, 'catalognumber'); } ],
-    catalogid => ['TXXX', sub { return "CATALOGNUMBER:" . tagmap_catalogid(shift, 'catalogid'); } ],
-    labelno => ['TXXX', sub { return "CATALOGNUMBER:" . tagmap_catalogid(shift, 'labelno'); } ],
+    catalog => ['TXXX', sub { return "CATALOGNUMBER:" . mp3TagEscapeOwn(tagmap_catalogid(shift, 'catalog')); } ],
+    catalognumber => ['TXXX', sub { return "CATALOGNUMBER:" . mp3TagEscapeOwn(tagmap_catalogid(shift, 'catalognumber')); } ],
+    catalogid => ['TXXX', sub { return "CATALOGNUMBER:" . mp3TagEscapeOwn(tagmap_catalogid(shift, 'catalogid')); } ],
+    labelno => ['TXXX', sub { return "CATALOGNUMBER:" . mp3TagEscapeOwn(tagmap_catalogid(shift, 'labelno')); } ],
     #'encoded-by' => 'TENC',
     #encoder => 'TSSE',
     #encoding => 'TSSE',
@@ -112,16 +112,17 @@ my %idLookup = (
         my $genreName = shift->{genre}[0];
         if (!exists($genreMap{lc($genreName)})) {
             # If no genre number exists, use the name
-            return $genreName;
+            return mp3TagEscapeOwn($genreName);
         }
-        return $genreMap{$genreName};
+        return mp3TagEscapeOwn($genreMap{$genreName});
     }],
     #mood => ['TMOO', sub {
     #}],
     bpm => 'TBPM',
     comment => ['COMM', sub {
         return undef if (defined($opt_comment) && $opt_comment eq "");
-        return "Comment:" . shift->{comment}[0];
+        # Use the default empty description and default english language
+        return mp3TagEscapeOwn(shift->{comment}[0]);
     }],
     copyright => 'TCOP',
     language => 'TLAN',
@@ -247,7 +248,7 @@ sub iterFlac {
     }
     #print(Dumper(\$mid3v2TagLine));
 
-    my $mid3v2TagCmd = "mid3v2 $mid3v2TagLine -- '$dest'";
+    my $mid3v2TagCmd = "mid3v2 -e $mid3v2TagLine -- '$dest'";
     #print("Mid3V2 Debug - CMD: [$mid3v2TagCmd]\n");
     qx($mid3v2TagCmd);
     if ($? != 0) {
@@ -358,7 +359,6 @@ sub tagsToOpts {
     my $tags = shift;
     my @tagopts;
 
-    # TODO escape stuff?
     foreach my $currKey (keys (%$tags)) {
         if (!exists($idLookup{$currKey})) {
             print("Tag: '$currKey' doesn't have a mapping, skipping\n");
@@ -369,6 +369,7 @@ sub tagsToOpts {
         if ($type eq "" && defined($tagMapping)) {
             # If tag name is defined and tag contents exists (aka not silenced)
             foreach my $tagCont (@{$tags->{$currKey}}) {
+                mp3TagEscape(\$tagCont);
                 shellsan(\$tagCont);
                 push(@tagopts, ["$tagMapping", "$tagCont"]);
             }
@@ -383,6 +384,7 @@ sub tagsToOpts {
 
             if ($mapContType eq "") {
                 foreach my $tagValue (@{$tags->{$currKey}}) {
+                    mp3TagEscape(\$tagValue);
                     shellsan(\$tagValue);
                     push(@tagopts, ["$mapKey", "$mapCont$tagValue"]);
                 }
@@ -446,6 +448,16 @@ sub getFlacTags {
 
 sub shellsan {
     ${$_[0]} =~ s/'/'\\''/g;
+}
+
+# Escape ':', and '\' characters in mp3 tag values
+sub mp3TagEscape {
+    ${$_[0]} =~ s!([:\\])!\\$1!g;
+}
+sub mp3TagEscapeOwn {
+    my $s = shift;
+    mp3TagEscape(\$s);
+    return $s;
 }
 
 sub usage {
