@@ -12,12 +12,10 @@ my $opt_comment;
 my $opt_catid;
 my $opt_rg;
 my $opt_embedcover;
+my $opt_publisher;
 
-# TODO fill this out
-my %genreMap = (
-    edm => 52,
-    soundtrack => 24,
-);
+# Additional encode options for a single track
+my $LAME_opts = "";
 
 # this is a godsent page
 # https://wiki.hydrogenaud.io/index.php?title=Tag_Mapping
@@ -110,11 +108,7 @@ my %idLookup = (
         return undef if ($opt_no_genre);
 
         my $genreName = shift->{genre}[0];
-        if (!exists($genreMap{lc($genreName)})) {
-            # If no genre number exists, use the name
-            return mp3TagEscapeOwn($genreName);
-        }
-        return mp3TagEscapeOwn($genreMap{$genreName});
+        return mp3TagEscapeOwn($genreName);
     }],
     #mood => ['TMOO', sub {
     #}],
@@ -129,22 +123,50 @@ my %idLookup = (
     #replaygain_album_peak => 'TXXX=REPLAYGAIN_ALBUM_PEAK',
     #replaygain_album_gain => 'TXXX=REPLAYGAIN_ALBUM_GAIN',
     replaygain_track_gain => sub {
-        print("EEEEEEERRRRRRRRROOOOOOOOOORRRRRRRRRRRE FIXXXXXXXXXXXX THIIIIIIIIISSSSSSSS\n");
-        exit(1);
-        return undef if (!$opt_rg);
-        shift->{replaygain_track_gain}[0] =~ /^(-?\d+\.\d+) dB$/;
-        my $gain_db = $1;
-        exit(1) if ($gain_db eq "");
-        return "--replaygain-accurate --gain $gain_db";
-        # TODO this lulw
+        my $gain_db = getGainFromTag(shift->{replaygain_track_gain}[0]);
+
+        if ($opt_rg) {
+            print("REPLAYGAIN :::::::::::::::: MODIFYING FILE\n");
+            # Modify file
+            $LAME_opts .= " --replaygain-accurate --gain $gain_db";
+            #print("Added LAME opt: $LAME_opts\n");
+            return undef;
+        } else {
+            print("REPLAYGAIN :::::::::::::::: COPYING TAG\n");
+            # Copy tags
+            return ["TXXX", "REPLAYGAIN_TRACK_GAIN:" . mp3TagEscapeOwn("$gain_db dB")];
+        }
+    },
+    replaygain_track_peak => sub {
+        my $peak = shift->{replaygain_track_peak}[0];
+
+        if ($opt_rg) {
+            # Modify file
+            $LAME_opts .= " --replaygain-accurate";
+            #print("Added LAME opt: $LAME_opts\n");
+            return undef;
+        } else {
+            # Copy tags
+            return ["TXXX", "REPLAYGAIN_TRACK_PEAK:" . mp3TagEscapeOwn("$peak")];
+        }
     },
 
     #replaygain_album_gain => 'TXXX=REPLAYGAIN_ALBUM_GAIN',
     #replaygain_album_peak => 'TXXX=REPLAYGAIN_ALBUM_PEAK',
     #replaygain_track_gain => 'TXXX=REPLAYGAIN_TRACK_GAIN',
-    #replaygain_track_peak => 'TXXX=REPLAYGAIN_TRACK_PEAK',
     script => ['TXXX', 'SCRIPT:'],
-    lyrics => 'USLT',
+    #lyrics => 'USLT',
+    #unsyncedlyrics => 'USLT',
+    unsyncedlyrics => sub {
+        my @lyrArr = @{shift->{unsyncedlyrics}};
+        my $tagStr = "";
+
+        foreach (@lyrArr) {
+            $tagStr .= mp3TagEscapeOwn($_) . "\\n";
+        }
+        # TODO figure out how to set language here
+        return ["USLT", "$tagStr"];
+    },
     lyricist => 'TEXT',
     circle => ['TXXX', 'CIRCLE:'],
     event => ['TXXX', 'EVENT:'],
@@ -160,6 +182,18 @@ sub tagmap_catalogid {
         return $t->{$own_tag_name}[0];
 }
 
+sub getGainFromTag {
+    my $tagVal = shift;
+
+    $tagVal =~ /^([-+]?\d+\.\d+) dB$/;
+    my $gain_db = $1;
+    if ($gain_db eq "") {
+        print("gain FAIL...: $tagVal\n");
+        exit(1);
+    }
+    return $gain_db;
+}
+
 my $opt_genre;
 my $opt_help;
 my @opt_tagreplace;
@@ -172,6 +206,7 @@ GetOptions(
     "catid=s" => \$opt_catid,
     "comment=s" => \$opt_comment,
     "cover=s" => \$opt_embedcover,
+    "pub=s" => \$opt_publisher,
     "tagreplace|t=s" => \@opt_tagreplace,
     "320|3" => \$opt_cbr,
 ) or die("Error in command line option");
@@ -206,6 +241,7 @@ sub iterFlac {
     #print("DEBUG: $dest\n");
     $dest =~ s/\.flac$/\.mp3/;
     my $tags = getFlacTags($flac);
+    #print(Dumper($tags));
 
     my $has_req_tags = 1;
     foreach (@required_tags) {
@@ -226,19 +262,25 @@ sub iterFlac {
     #}
     my $tagopts = tagsToOpts($tags);
 
-    #print("Debug: @$tagopts\n");
+    #print(Dumper($tagopts));
+
+    $dest =~ m!(.*)/[^/]+!;
+    my $basedir = $1;
+    mkdir($basedir) if (not -f $basedir);
+
     shellsan(\$dest);
     my $cmd;
     if ($opt_cbr) {
-        $cmd = "flac -cd -- '$flac' | lame -S -b 320 -q 0 --add-id3v2 - '$dest'";
+        $cmd = "flac -cd -- '$flac' | lame $LAME_opts -S -b 320 -q 0 --add-id3v2 - '$dest'";
     } else {
-        $cmd = "flac -cd -- '$flac' | lame -S -V0 --vbr-new -q 0 --add-id3v2 - '$dest'";
+        $cmd = "flac -cd -- '$flac' | lame $LAME_opts -S -V0 --vbr-new -q 0 --add-id3v2 - '$dest'";
     }
     #print("Debug - CMD: [$cmd]\n");
     qx($cmd);
     if ($? != 0) {
         exit(1);
     }
+    $LAME_opts = ""; # Reset for the next track
 
     my $mid3v2TagLine = "";
     #print(Dumper(\@$tagopts));
@@ -309,6 +351,13 @@ sub argsToTags {
             delete($argTags->{comment});
         } else {
             $argTags->{comment} = [$opt_comment];
+        }
+    }
+    if (defined($opt_publisher)) {
+        if ($opt_publisher eq "") {
+            delete($argTags->{organization});
+        } else {
+            $argTags->{organization} = [$opt_publisher];
         }
     }
     if (defined($opt_catid) && $opt_catid ne "") {
@@ -403,6 +452,7 @@ sub tagsToOpts {
             #}
 
             my $codeRet = $tagMapping->($tags);
+            next if (not defined($codeRet));
             my $mapKey = $codeRet->[0];
             my $mapCont = $codeRet->[1];
             shellsan(\$mapCont);
@@ -430,17 +480,30 @@ sub getFlacTags {
     if ($? != 0) {
         exit(1);
     }
+    my $curr_tag = "";
     foreach my $tagline (@tagtxt) {
-        if ($tagline =~ /comment\[\d+\]:\s(.*?)=(.*)/) {
+        if ($tagline =~ /^\s+comment\[\d+\]:\s(.*?)=(.*)/) {
             if ($2 eq '') {
                 print("Empty tag: $1\n");
                 next;
             }
-            if (not exists($tags{lc($1)})) {
-                @{$tags{lc($1)}} = ($2);
+            $curr_tag = lc($1);
+            if (not exists($tags{$curr_tag})) {
+                @{$tags{$curr_tag}} = ($2);
             } else {
-                push(@{$tags{lc($1)}}, $2);
+                push(@{$tags{$curr_tag}}, $2);
             }
+        } elsif ($curr_tag ne "") {
+            # Maybe multi line? (like lyrics) store if it was multiple tag=value fields
+            chomp($tagline);
+            push(@{$tags{$curr_tag}}, $tagline);
+            #if (ref(@{$tags{$curr_tag}}) eq "") {
+                # Second line
+                #@{$tags{$curr_tag}} = (@{$tags{$curr_tag}}, $tagline);
+                #} else {
+                # 3rd, or later line
+                #push(@{$tags{$curr_tag}}, $tagline);
+                #}
         }
     }
     return \%tags;
@@ -470,16 +533,17 @@ sub help {
 Usage:
     flac2mp3.pl [options] <input_dir> <output_dir>
 
-    -h, --help          print this help text
-    -g, --genre  NUM    force this genre as a tag (lame --genre-list)
-    -G, --no-genre      ignore genre in flac file
-    -r, --replay-gain   use replay gain values
-    --catid     STRING  the catalog id to set (or "")
-    --comment   STRING  the comment to set (or "")
-    --cover     STRING  Use this image as cover (or "" to not copy from flac)
-    -t --tagreplace STR Replace flac tags for a specific file only
-                        Like -t '02*flac/TITLE=Some other title'
-    -3, --320           Convert into CBR 320 instead into the default V0
+    -h, --help           print this help text
+    -g, --genre  NUM     force this genre as a tag (lame --genre-list)
+    -G, --no-genre       ignore genre in flac file
+    -r, --replay-gain    modify file with the replay-gain values
+    --catid     STRING   the catalog id to set (or "")
+    --comment   STRING   the comment to set (or "")
+    --cover     STRING   Use this image as cover (or "" to not copy from flac)
+    --pub       STRING   Publisher
+    -t --tagreplace STR  Replace flac tags for a specific file only
+                         Like -t '02*flac/TITLE=Some other title'
+    -3, --320            Convert into CBR 320 instead into the default V0
 EOF
     print($h);
     exit 0;
