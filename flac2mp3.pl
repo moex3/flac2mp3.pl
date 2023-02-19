@@ -104,6 +104,7 @@ my %idLookup = (
     #encoding => 'TSSE',
     #'encoder settings' => 'TSSE',
     media => 'TMED',
+    sourcemedia => 'TMED',
     genre => ['TCON', sub {
         return undef if ($opt_no_genre);
 
